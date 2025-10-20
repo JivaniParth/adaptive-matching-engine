@@ -19,7 +19,12 @@ class BaseMatchingEngine:
         Process order - for BaseMatchingEngine, this is the same as add_order
         This method exists for compatibility with AdaptiveMatchingEngine interface
         """
-        return self.add_order(order)
+
+        self.order_count += 1
+
+        # FAST PATH - add this!
+        if self.current_regime == MarketRegime.NORMAL and self.order_count % 100 != 0:
+            return self.add_order(order)
 
     def add_order(self, order: Order) -> List[Trade]:
         """Add order and return list of generated trades"""
@@ -206,7 +211,7 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
 
     def _transition_regime(self, new_regime: MarketRegime):
         """Smooth transition between regimes"""
-        print(f"Regime transition: {self.current_regime.value} -> {new_regime.value}")
+        # print(f"Regime transition: {self.current_regime.value} -> {new_regime.value}")
 
         # Update order books to new regime
         self.bids.set_regime(new_regime)

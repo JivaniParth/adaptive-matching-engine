@@ -4,12 +4,12 @@ Default configuration for the adaptive matching engine
 
 DEFAULT_CONFIG = {
     "regime_detection": {
-        "window_size": 20,  # Very small window
-        "volatility_threshold": 0.001,  # 0.1% price movement (extremely sensitive)
-        "spread_threshold": 0.0005,  # 0.05% spread (extremely sensitive)
-        "imbalance_threshold": 0.3,  # 30% volume imbalance (extremely sensitive)
-        "cancellation_threshold": 0.1,  # 10% cancellation rate (extremely sensitive)
-        "detection_interval": 5,  # Check regime very frequently
+        "window_size": 50,
+        "volatility_threshold": 0.05,
+        "spread_threshold": 0.02,
+        "imbalance_threshold": 0.8,
+        "cancellation_threshold": 0.4,
+        "detection_interval": 100,
     },
     # Matching Engine Parameters
     "matching_engine": {
