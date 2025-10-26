@@ -8,8 +8,16 @@ temp/
 
 __init__.py
 
+results/
+
 #ignoring data folder which is outside src folder and contains .csv data files
 data/
 
 # Not to ignore data folder inside src/
 !/src/data/
+
+CHEAT_SHEET.md
+FOLDER_GUIDE.md
+QUICKSTART.md
+SOLUTIONS_SUMMARY.md
+VISUAL_FLOW.md

@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Tuple
 import time
 from .order_book import OrderBookSide, AdaptiveOrderBookSide, PriceLevel
 from .order_types import Order, OrderSide, Trade, OrderType, MarketRegime
-from ..adaptive.regime_detector import RegimeDetector
+from ..adaptive.regime_detector import OptimizedRegimeDetector
 
 
 class BaseMatchingEngine:
@@ -19,12 +19,7 @@ class BaseMatchingEngine:
         Process order - for BaseMatchingEngine, this is the same as add_order
         This method exists for compatibility with AdaptiveMatchingEngine interface
         """
-
-        self.order_count += 1
-
-        # FAST PATH - add this!
-        if self.current_regime == MarketRegime.NORMAL and self.order_count % 100 != 0:
-            return self.add_order(order)
+        return self.add_order(order)
 
     def add_order(self, order: Order) -> List[Trade]:
         """Add order and return list of generated trades"""
@@ -72,7 +67,7 @@ class BaseMatchingEngine:
                 buy_order.remaining_quantity, sell_order.remaining_quantity
             )
 
-            # FIX: Always use the limit order's price for trades
+            # Always use the limit order's price for trades
             trade_price = sell_order.price  # Use ask price for buy market orders
 
             trade = Trade.create_trade(buy_order, sell_order, trade_quantity)
@@ -115,7 +110,7 @@ class BaseMatchingEngine:
                 sell_order.remaining_quantity, buy_order.remaining_quantity
             )
 
-            # FIX: Always use the limit order's price for trades
+            # Always use the limit order's price for trades
             trade_price = buy_order.price  # Use bid price for sell market orders
 
             trade = Trade.create_trade(buy_order, sell_order, trade_quantity)
@@ -175,7 +170,8 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
         self.bids = AdaptiveOrderBookSide(OrderSide.BUY)
         self.asks = AdaptiveOrderBookSide(OrderSide.SELL)
 
-        self.regime_detector = RegimeDetector(config)
+        # Use optimized regime detector
+        self.regime_detector = OptimizedRegimeDetector(config)
         self.current_regime = MarketRegime.NORMAL
         self.regime_change_count = 0
         self.last_regime_change = time.time()
@@ -184,40 +180,55 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
         self.metrics_history = []
         self.regime_history = []
 
+        # Performance optimization
+        self.order_count = 0
+
     def process_order(self, order: Order) -> List[Trade]:
         """Process order with adaptive logic"""
-        # Update market metrics with new order
-        self._update_market_metrics(order)
+        self.order_count += 1
 
-        # Detect regime change
-        new_regime = self.regime_detector.detect_regime(
-            self._get_best_bid(),
-            self._get_best_ask(),
-            self._get_buy_volume(),
-            self._get_sell_volume(),
-        )
+        # FAST PATH - only update metrics and detect regime periodically
+        if self.order_count % 100 == 0:  # Check every 100 orders
+            # Update market metrics with new order
+            self._update_market_metrics(order)
 
-        # Handle regime transition
-        if new_regime != self.current_regime:
-            self._transition_regime(new_regime)
+            # Detect regime change
+            new_regime = self.regime_detector.detect_regime(
+                self._get_best_bid(),
+                self._get_best_ask(),
+                self._get_buy_volume(),
+                self._get_sell_volume(),
+            )
+
+            # Handle regime transition
+            if new_regime != self.current_regime:
+                self._transition_regime(new_regime)
+        else:
+            # Lightweight metric update without regime detection
+            self.regime_detector.update_metrics(
+                current_price=self._get_mid_price(),
+                volume=order.quantity,
+                order_side=order.side,
+                spread=self._get_spread(),
+            )
 
         # Process order with current regime logic
         trades = self.add_order(order)
 
-        # Record metrics
-        self._record_metrics(order, trades)
+        # Record metrics (only periodically to save time)
+        if self.order_count % 100 == 0:
+            self._record_metrics(order, trades)
 
         return trades
 
     def _transition_regime(self, new_regime: MarketRegime):
         """Smooth transition between regimes"""
-        # print(f"Regime transition: {self.current_regime.value} -> {new_regime.value}")
-
         # Update order books to new regime
         self.bids.set_regime(new_regime)
         self.asks.set_regime(new_regime)
 
         # Update state
+        old_regime = self.current_regime
         self.current_regime = new_regime
         self.regime_change_count += 1
         self.last_regime_change = time.time()
@@ -226,7 +237,7 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
         self.regime_history.append(
             {
                 "timestamp": time.time(),
-                "from_regime": self.current_regime.value,
+                "from_regime": old_regime.value,
                 "to_regime": new_regime.value,
             }
         )
