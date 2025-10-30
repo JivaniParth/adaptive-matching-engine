@@ -354,6 +354,97 @@ class NiftyDataLoader:
         print(f"✅ Generated {len(orders)} orders from {len(df)} market records")
         return orders
 
+    def convert_to_orders_stream(
+        self,
+        df: pd.DataFrame,
+        orders_per_record: int = 3,
+        market_order_ratio: float = 0.1,
+    ):
+        """Stream orders generated from market data records (generator).
+
+        Yields Order objects instead of building the full list in memory.
+        """
+        if len(df) == 0:
+            return
+
+        price_column = "mid_price" if "mid_price" in df.columns else "price"
+
+        for idx, row in df.iterrows():
+            # Handle timestamp
+            if hasattr(row["timestamp"], "timestamp"):
+                base_timestamp = row["timestamp"].timestamp()
+            else:
+                base_timestamp = (
+                    float(row["timestamp"])
+                    if isinstance(row["timestamp"], (int, float))
+                    else 0.0
+                )
+
+            base_price = row[price_column]
+            base_volume = row.get("volume", 100)
+
+            for i in range(orders_per_record):
+                # Determine order side
+                if idx > 0:
+                    try:
+                        prev_price = df.iloc[idx - 1][price_column]
+                        price_change = (
+                            (base_price - prev_price) / prev_price
+                            if prev_price > 0
+                            else 0
+                        )
+                        buy_probability = 0.5 - (price_change * 10)
+                        buy_probability = max(0.1, min(0.9, buy_probability))
+                    except Exception:
+                        buy_probability = 0.5
+                else:
+                    buy_probability = 0.5
+
+                side = (
+                    OrderSide.BUY
+                    if np.random.random() < buy_probability
+                    else OrderSide.SELL
+                )
+
+                order_type = (
+                    OrderType.MARKET
+                    if np.random.random() < market_order_ratio
+                    else OrderType.LIMIT
+                )
+
+                if order_type == OrderType.LIMIT:
+                    price_offset = np.random.normal(0, 0.001)
+                    price = base_price * (1 + price_offset)
+                else:
+                    price = 0.0
+
+                rand = np.random.random()
+                if rand < 0.7:
+                    quantity = max(
+                        1, int(base_volume * 0.001 * np.random.uniform(0.1, 0.5))
+                    )
+                elif rand < 0.9:
+                    quantity = max(
+                        1, int(base_volume * 0.001 * np.random.uniform(0.5, 2.0))
+                    )
+                else:
+                    quantity = max(
+                        1, int(base_volume * 0.001 * np.random.uniform(2.0, 10.0))
+                    )
+
+                order_timestamp = base_timestamp + (i * 0.001)
+
+                order = Order(
+                    order_id=f"{row.get('symbol', 'NIFTY')}_{idx}_{i}",
+                    side=side,
+                    price=price,
+                    quantity=quantity,
+                    timestamp=order_timestamp,
+                    order_type=order_type,
+                )
+
+                yield order
+
 
 # Global instance
 nifty_loader = NiftyDataLoader()

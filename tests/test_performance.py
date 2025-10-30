@@ -29,6 +29,31 @@ class TestPerformance(unittest.TestCase):
         self.assertLess(stats["avg_latency_ms"], 100)  # Less than 100ms average
         self.assertLess(stats["p99_latency_ms"], 500)  # Less than 500ms P99
 
+    def test_benchmark_mode_comparison(self):
+        """Ensure benchmark mode runs and returns comparable processed order counts."""
+        from src.data.nifty_loader import NiftyDataLoader
+        from src.core.matching_engine import BaseMatchingEngine, AdaptiveMatchingEngine
+
+        loader = NiftyDataLoader(data_directory="data")
+        df = loader.load_intraday_data("NIFTY", 2008)
+        if df is None or len(df) == 0:
+            # Skip if data not present
+            return
+
+        # Use streaming generator but materialize a small sample for test speed
+        orders = list(loader.convert_to_orders_stream(df, orders_per_record=1))[:200]
+
+        static_engine = BaseMatchingEngine()
+        for o in orders:
+            static_engine.process_order(o)
+
+        adaptive_engine = AdaptiveMatchingEngine(benchmark_mode=True)
+        for o in orders:
+            adaptive_engine.process_order(o)
+
+        # Both engines should have processed same number of orders
+        assert len(static_engine.order_history) == len(adaptive_engine.order_history)
+
     def test_throughput_volatile_orders(self):
         """Test throughput with volatile order flow"""
         orders = self.generator.generate_volatile_orders(1000)

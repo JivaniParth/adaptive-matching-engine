@@ -57,8 +57,9 @@ class AdaptivePriceLevel(PriceLevel):
             self._maintain_sorted = False
         elif self.regime in [MarketRegime.HIGH_VOLATILITY, MarketRegime.ILLIQUID]:
             # Price-Size-Time: Sort by size (desc), then time (asc)
+            # Sort by remaining size (descending) then by timestamp (ascending)
             self.orders = deque(
-                sorted(self.orders, key=lambda o: (-o.quantity, o.timestamp))
+                sorted(self.orders, key=lambda o: (-o.remaining_quantity, o.timestamp))
             )
             self._maintain_sorted = True
         elif self.regime == MarketRegime.HIGH_FREQUENCY:

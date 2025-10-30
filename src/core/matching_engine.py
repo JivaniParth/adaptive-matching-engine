@@ -76,6 +76,16 @@ class BaseMatchingEngine:
             buy_order.filled_quantity += trade_quantity
             sell_order.filled_quantity += trade_quantity
 
+            # Update price-level total volume when orders are (partially) filled
+            try:
+                price_level.total_volume -= trade_quantity
+                if price_level.total_volume < 0:
+                    # Defensive: don't allow negative totals
+                    price_level.total_volume = 0
+            except Exception:
+                # If price_level doesn't expose total_volume, ignore
+                pass
+
             if sell_order.remaining_quantity == 0:
                 self.asks.remove_order(sell_order.order_id)
 
@@ -118,6 +128,14 @@ class BaseMatchingEngine:
 
             sell_order.filled_quantity += trade_quantity
             buy_order.filled_quantity += trade_quantity
+
+            # Update price-level total volume when orders are (partially) filled
+            try:
+                price_level.total_volume -= trade_quantity
+                if price_level.total_volume < 0:
+                    price_level.total_volume = 0
+            except Exception:
+                pass
 
             if buy_order.remaining_quantity == 0:
                 self.bids.remove_order(buy_order.order_id)
@@ -163,13 +181,12 @@ class BaseMatchingEngine:
 class AdaptiveMatchingEngine(BaseMatchingEngine):
     """Adaptive matching engine with regime detection"""
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Optional[Dict] = None, benchmark_mode: bool = False):
         super().__init__()
 
         # Replace with adaptive order books
         self.bids = AdaptiveOrderBookSide(OrderSide.BUY)
         self.asks = AdaptiveOrderBookSide(OrderSide.SELL)
-
         # Use optimized regime detector
         self.regime_detector = OptimizedRegimeDetector(config)
         self.current_regime = MarketRegime.NORMAL
@@ -183,12 +200,23 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
         # Performance optimization
         self.order_count = 0
 
+        # Benchmark mode disables regime detection and metrics recording to
+        # measure raw throughput with the adaptive order book structure.
+        self.benchmark_mode = bool(benchmark_mode)
+
     def process_order(self, order: Order) -> List[Trade]:
         """Process order with adaptive logic"""
+        # If in benchmark mode, avoid extra metric/regime overhead
+        if self.benchmark_mode:
+            # Minimal processing path
+            return super().process_order(order)
+
         self.order_count += 1
 
         # FAST PATH - only update metrics and detect regime periodically
-        if self.order_count % 100 == 0:  # Check every 100 orders
+        interval = getattr(self.regime_detector, "detection_interval", 100)
+
+        if self.order_count % interval == 0:
             # Update market metrics with new order
             self._update_market_metrics(order)
 
@@ -216,7 +244,8 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
         trades = self.add_order(order)
 
         # Record metrics (only periodically to save time)
-        if self.order_count % 100 == 0:
+        record_interval = max(1, interval // 10)
+        if self.order_count % record_interval == 0:
             self._record_metrics(order, trades)
 
         return trades
@@ -260,21 +289,21 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
     def _get_mid_price(self) -> float:
         bid = self._get_best_bid()
         ask = self._get_best_ask()
-        if bid and ask:
+        if bid is not None and ask is not None:
             return (bid + ask) / 2
         return 0.0
 
     def _get_spread(self) -> float:
         bid = self._get_best_bid()
         ask = self._get_best_ask()
-        if bid and ask:
+        if bid is not None and ask is not None:
             return ask - bid
         return 0.0
 
     def _get_buy_volume(self) -> int:
         # Calculate total buy volume at best bid
         best_bid = self._get_best_bid()
-        if best_bid:
+        if best_bid is not None:
             level = self.bids.get_price_level(best_bid)
             return level.total_volume if level else 0
         return 0
@@ -282,7 +311,7 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
     def _get_sell_volume(self) -> int:
         # Calculate total sell volume at best ask
         best_ask = self._get_best_ask()
-        if best_ask:
+        if best_ask is not None:
             level = self.asks.get_price_level(best_ask)
             return level.total_volume if level else 0
         return 0

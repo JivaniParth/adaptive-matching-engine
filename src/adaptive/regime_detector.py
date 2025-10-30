@@ -33,8 +33,8 @@ class OptimizedRegimeDetector:
         self.order_count = 0
         self.last_regime = MarketRegime.NORMAL
 
-        # Reduced window size for faster computation
-        self.window_size = min(self.config.get("window_size", 50), 50)  # Cap at 50
+        # Window size for calculations (default matches tests)
+        self.window_size = self.config.get("window_size", 100)
 
         # Data windows - SMALLER for performance
         self.price_history: deque = deque(maxlen=self.window_size)
@@ -66,11 +66,12 @@ class OptimizedRegimeDetector:
 
     def _get_default_config(self) -> dict:
         return {
-            "window_size": 50,  # Smaller window
+            "window_size": 100,
             "volatility_threshold": 0.05,  # Less sensitive
             "spread_threshold": 0.02,
-            "imbalance_threshold": 0.8,
-            "cancellation_threshold": 0.4,
+            # More permissive thresholds to detect directional and HF regimes
+            "imbalance_threshold": 0.5,
+            "cancellation_threshold": 0.25,
             "detection_interval": 100,  # Check less frequently
         }
 
@@ -109,6 +110,8 @@ class OptimizedRegimeDetector:
     def record_cancellation(self):
         """Record order cancellation"""
         self.cancellation_count += 1
+        # Treat cancellations as events that contribute to the total order count
+        # (tests expect cancellations to be part of the denominator)
         self.total_orders += 1
         self._metrics_dirty = True
 
@@ -136,8 +139,19 @@ class OptimizedRegimeDetector:
             bid_price, ask_price, buy_volume, sell_volume
         )
 
-        # Prioritized regime detection (most common first for branch prediction)
-        if metrics.volatility > self.volatility_threshold:
+        # Additional volatility proxy: large bid-ask range relative to mid-price
+        mid_price = (
+            (bid_price + ask_price) / 2
+            if (bid_price is not None and ask_price is not None)
+            else 0.0
+        )
+        mid_range_vol = abs(ask_price - bid_price) / mid_price if mid_price > 0 else 0.0
+
+        # Prioritized regime detection
+        if (
+            metrics.volatility > self.volatility_threshold
+            or mid_range_vol > self.volatility_threshold
+        ):
             self.last_regime = MarketRegime.HIGH_VOLATILITY
         elif metrics.volume_imbalance > self.imbalance_threshold:
             self.last_regime = MarketRegime.DIRECTIONAL
@@ -190,7 +204,11 @@ class OptimizedRegimeDetector:
             else 0.0
         )
 
-        mid_price = (bid_price + ask_price) / 2 if bid_price and ask_price else 0.0
+        mid_price = (
+            (bid_price + ask_price) / 2
+            if (bid_price is not None and ask_price is not None)
+            else 0.0
+        )
 
         self._cached_metrics = MarketMetrics(
             volatility=volatility,
@@ -217,3 +235,25 @@ class OptimizedRegimeDetector:
             "volume_imbalance": metrics.volume_imbalance,
             "cancellation_rate": metrics.cancellation_rate,
         }
+
+    # Convenience / compatibility methods expected by older API/tests
+    def calculate_volatility(self) -> float:
+        metrics = self._calculate_fast_metrics(0, 0, 0, 0)
+        return metrics.volatility
+
+    def calculate_volume_imbalance(self) -> float:
+        total = self.buy_volume + self.sell_volume
+        return abs(self.buy_volume - self.sell_volume) / total if total > 0 else 0.0
+
+    def calculate_cancellation_rate(self) -> float:
+        return (
+            self.cancellation_count / self.total_orders
+            if self.total_orders > 0
+            else 0.0
+        )
+
+
+# Backwards-compatible alias for older tests / external APIs that expect
+# a `RegimeDetector` class name. Keep both names pointing to the same
+# implementation to avoid breaking imports.
+RegimeDetector = OptimizedRegimeDetector

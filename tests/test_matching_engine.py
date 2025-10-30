@@ -212,6 +212,21 @@ class TestAdaptiveMatchingEngine(unittest.TestCase):
         # 10MB is conservative for 5000 orders with order book
         self.assertLess(memory_increase, 10 * 1024 * 1024)  # 10MB
 
+    def test_detection_interval_affects_recording(self):
+        """If detection_interval is small, metrics should be recorded more frequently."""
+        from src.core.matching_engine import AdaptiveMatchingEngine
+
+        cfg = {"detection_interval": 5}
+        engine = AdaptiveMatchingEngine(config=cfg)
+        gen = OrderGenerator()
+
+        orders = gen.generate_orders(3)
+        for o in orders:
+            engine.process_order(o)
+
+        # detection_interval=5 -> record_interval = max(1,5//10)=1 -> record every order
+        self.assertGreaterEqual(len(engine.metrics_history), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

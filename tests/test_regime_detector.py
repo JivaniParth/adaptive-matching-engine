@@ -193,6 +193,29 @@ class TestRegimeDetector(unittest.TestCase):
             self.assertIn(key, summary)
             self.assertIsInstance(summary[key], (int, float))
 
+    def test_compatibility_alias_and_helpers(self):
+        """Ensure RegimeDetector alias exists and helper methods behave sensibly"""
+        # Alias should construct the same implementation
+        det = RegimeDetector()
+
+        # Update a few metrics
+        for i in range(5):
+            det.update_metrics(100.0 + i, 100, OrderSide.BUY, 0.01)
+
+        # No cancellations yet
+        self.assertAlmostEqual(det.calculate_cancellation_rate(), 0.0, places=3)
+
+        # Record a cancellation and check rate calculation
+        det.record_cancellation()
+        # total_orders should include the cancellations as implemented
+        self.assertAlmostEqual(
+            det.calculate_cancellation_rate(), 1.0 / (5 + 1), places=2
+        )
+
+        # Volatility and imbalance helpers return sensible numeric types
+        self.assertIsInstance(det.calculate_volatility(), float)
+        self.assertIsInstance(det.calculate_volume_imbalance(), float)
+
     def test_configuration_validation(self):
         """Test configuration validation"""
         from src.utils.validators import regime_validator
