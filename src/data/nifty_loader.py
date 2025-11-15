@@ -32,7 +32,6 @@ class NiftyDataLoader:
             else:
                 raise ValueError(f"Unsupported file format: {file_format}")
 
-            print(f"Loaded {len(df)} records from {filename}")
             return self._preprocess_data(df, symbol)
 
         except FileNotFoundError:
@@ -49,8 +48,6 @@ class NiftyDataLoader:
 
         # Convert all column names to lowercase for consistency
         df.columns = [col.lower().strip() for col in df.columns]
-
-        print(f"  Original columns: {list(df.columns)}")
 
         # Flexible column mapping for different Nifty data formats
         column_mapping = {
