@@ -15,9 +15,3 @@ data/
 
 # Not to ignore data folder inside src/
 !/src/data/
-
-CHEAT_SHEET.md
-FOLDER_GUIDE.md
-QUICKSTART.md
-SOLUTIONS_SUMMARY.md
-VISUAL_FLOW.md

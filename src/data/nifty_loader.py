@@ -98,21 +98,36 @@ class NiftyDataLoader:
 
         # Ensure we have essential columns
         if "timestamp" not in df.columns:
-            # Try to find datetime columns
-            datetime_cols = [
-                col
-                for col in df.columns
-                if any(x in col for x in ["time", "date", "datetime"])
-            ]
-            if datetime_cols:
-                df["timestamp"] = df[datetime_cols[0]]
-                print(f"  Using '{datetime_cols[0]}' as timestamp column")
-            else:
-                # Create a synthetic timestamp if none exists
-                df["timestamp"] = pd.date_range(
-                    start="2000-01-01", periods=len(df), freq="1min"
-                )
-                print("  ⚠️ No timestamp column found, using synthetic timestamps")
+            # Prefer combining separate date + time columns when both exist
+            if "date" in df.columns and "time" in df.columns:
+                try:
+                    df["timestamp"] = pd.to_datetime(
+                        df["date"].astype(str).str.strip()
+                        + " "
+                        + df["time"].astype(str).str.strip(),
+                        errors="coerce",
+                        infer_datetime_format=True,
+                    )
+                    print("  Using 'date' + 'time' as timestamp column")
+                except Exception:
+                    df["timestamp"] = pd.NaT
+
+            # Fallback: look for any datetime-like column
+            if "timestamp" not in df.columns or df["timestamp"].isna().all():
+                datetime_cols = [
+                    col
+                    for col in df.columns
+                    if any(x in col for x in ["time", "date", "datetime"])
+                ]
+                if datetime_cols:
+                    df["timestamp"] = df[datetime_cols[0]]
+                    print(f"  Using '{datetime_cols[0]}' as timestamp column")
+                else:
+                    # Create a synthetic timestamp if none exists
+                    df["timestamp"] = pd.date_range(
+                        start="2000-01-01", periods=len(df), freq="1min"
+                    )
+                    print("  ⚠️ No timestamp column found, using synthetic timestamps")
 
         if "price" not in df.columns:
             # Try to find price columns
@@ -127,16 +142,23 @@ class NiftyDataLoader:
             else:
                 raise ValueError("No price column found in data")
 
-        # Convert timestamp to datetime
-        try:
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
-            df = df.sort_values("timestamp")
-        except Exception as e:
-            print(f"  ⚠️ Could not parse timestamp: {e}")
-            # Create sequential timestamps
-            df["timestamp"] = pd.date_range(
-                start="2000-01-01", periods=len(df), freq="1min"
-            )
+        # Convert timestamp to datetime safely; fill unparsable rows with sequential timestamps
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], errors="coerce", infer_datetime_format=True
+        )
+        if df["timestamp"].isna().any():
+            # Replace NaT values with a sequential range anchored at the first valid timestamp or a default
+            valid_ts = df["timestamp"].dropna()
+            if len(valid_ts) > 0:
+                start = valid_ts.iloc[0]
+            else:
+                start = pd.Timestamp("2000-01-01")
+
+            na_mask = df["timestamp"].isna()
+            replacement = pd.date_range(start=start, periods=na_mask.sum(), freq="1min")
+            df.loc[na_mask, "timestamp"] = replacement.values
+
+        df = df.sort_values("timestamp").reset_index(drop=True)
 
         # Add symbol
         df["symbol"] = symbol
@@ -152,9 +174,21 @@ class NiftyDataLoader:
 
         # Ensure volume column exists
         if "volume" not in df.columns:
-            # Create synthetic volume if none exists
-            df["volume"] = np.random.randint(100, 10000, size=len(df))
-            print("  ⚠️ No volume column found, using synthetic volumes")
+            # Create a realistic synthetic volume when none exists:
+            # - Use absolute pct change of price as proxy for activity
+            # - Scale to an integer and ensure a sensible minimum
+            try:
+                pct = df["price"].pct_change().abs().fillna(0)
+                scaled = (pct * 1_000_000).astype(int)
+                # Ensure a minimum volume to avoid zeros
+                df["volume"] = scaled.clip(lower=100)
+            except Exception:
+                # Fallback to random volumes if price-based method fails
+                df["volume"] = np.random.randint(100, 10000, size=len(df))
+
+            print(
+                "  ⚠️ No volume column found, created synthetic volume from price changes"
+            )
 
         print(f"  Final columns: {list(df.columns)}")
         return df
