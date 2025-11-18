@@ -2,6 +2,8 @@ import heapq
 from collections import defaultdict, deque
 from typing import Dict, List, Optional, Tuple
 from .order_types import Order, OrderSide, Trade, MarketRegime
+from threading import RLock
+import bisect
 
 
 class PriceLevel:
@@ -11,6 +13,8 @@ class PriceLevel:
         self.price = price
         self.orders = deque()  # FIFO queue for orders
         self.total_volume = 0
+        # Flag used by adaptive price levels to indicate a deferred sort
+        self._needs_resort = False
 
     def add_order(self, order: Order):
         self.orders.append(order)
@@ -43,35 +47,62 @@ class AdaptivePriceLevel(PriceLevel):
         super().__init__(price)
         self.regime = regime
         self._maintain_sorted = False
+        self._sorted = False
 
     def set_regime(self, new_regime: MarketRegime):
         """Change regime and re-sort orders if needed"""
         if self.regime != new_regime:
             self.regime = new_regime
-            self._re_sort_orders()
+            # Mark for re-sort; perform actual re-sort lazily when needed
+            self._needs_resort = True
+            self._sorted = False
 
     def _re_sort_orders(self):
         """Re-sort orders based on current regime"""
         if self.regime == MarketRegime.NORMAL:
             # Price-Time: Maintain FIFO (no sorting needed)
             self._maintain_sorted = False
+            self._sorted = True
+            self._needs_resort = False
         elif self.regime in [MarketRegime.HIGH_VOLATILITY, MarketRegime.ILLIQUID]:
-            # Price-Size-Time: Sort by size (desc), then time (asc)
-            # Sort by remaining size (descending) then by timestamp (ascending)
-            self.orders = deque(
-                sorted(self.orders, key=lambda o: (-o.remaining_quantity, o.timestamp))
-            )
+            # Price-Size-Time: maintain an order list sorted by size desc then time asc
+            # Instead of resorting entire collection every time, we'll create a sorted list
+            # and convert back to deque for FIFO access of the prioritized order
+            orders_list = list(self.orders)
+            orders_list.sort(key=lambda o: (-o.remaining_quantity, o.timestamp))
+            self.orders = deque(orders_list)
             self._maintain_sorted = True
+            self._sorted = True
+            self._needs_resort = False
         elif self.regime == MarketRegime.HIGH_FREQUENCY:
             # Pro-Rata: We'll handle this differently during matching
             self._maintain_sorted = False
+            self._sorted = True
+            self._needs_resort = False
 
     def add_order(self, order: Order):
-        super().add_order(order)
+        # When maintaining sorted order by size, insert in sorted position to
+        # avoid repeatedly sorting the entire deque.
         if self._maintain_sorted:
-            self._re_sort_orders()
+            # Ensure orders is a list for bisect insertion
+            orders_list = list(self.orders)
+            # Key: (-size, timestamp) so largest sizes come first
+            key = (-order.remaining_quantity, order.timestamp)
+            # Build list of keys for bisect
+            keys = [(-o.remaining_quantity, o.timestamp) for o in orders_list]
+            idx = bisect.bisect_left(keys, key)
+            orders_list.insert(idx, order)
+            self.orders = deque(orders_list)
+            self.total_volume += order.remaining_quantity
+            self._sorted = True
+            self._needs_resort = False
+        else:
+            super().add_order(order)
 
     def get_top_order(self) -> Optional[Order]:
+        # Lazily re-sort if needed
+        if self._needs_resort and self._maintain_sorted:
+            self._re_sort_orders()
         return self.orders[0] if self.orders else None
 
 
@@ -84,6 +115,8 @@ class OrderBookSide:
         self.price_levels: Dict[float, PriceLevel] = {}
         self.order_map: Dict[str, Order] = {}
         self.order_to_price_level: Dict[str, PriceLevel] = {}
+        # Lock to protect concurrent access (add/remove/reads)
+        self.lock = RLock()
 
     def _heap_push(self, price: float):
         """Push price to heap with proper comparison"""
@@ -113,57 +146,58 @@ class OrderBookSide:
     def add_order(self, order: Order) -> bool:
         """Add order to order book side"""
         price = order.price
+        with self.lock:
+            if price not in self.price_levels:
+                # Create new price level
+                price_level = PriceLevel(price)
+                self.price_levels[price] = price_level
+                self._heap_push(price)
+            else:
+                price_level = self.price_levels[price]
 
-        if price not in self.price_levels:
-            # Create new price level
-            price_level = PriceLevel(price)
-            self.price_levels[price] = price_level
-            self._heap_push(price)
-        else:
-            price_level = self.price_levels[price]
+            # Add order to price level
+            price_level.add_order(order)
 
-        # Add order to price level
-        price_level.add_order(order)
-
-        # Update mappings for O(1) cancellation
-        self.order_map[order.order_id] = order
-        self.order_to_price_level[order.order_id] = price_level
-        return True
+            # Update mappings for O(1) cancellation
+            self.order_map[order.order_id] = order
+            self.order_to_price_level[order.order_id] = price_level
+            return True
 
     def remove_order(self, order_id: str) -> bool:
         """Remove order by ID in O(1) average time"""
-        if order_id not in self.order_to_price_level:
-            return False
+        with self.lock:
+            if order_id not in self.order_to_price_level:
+                return False
 
-        price_level = self.order_to_price_level[order_id]
-        order = self.order_map[order_id]
+            price_level = self.order_to_price_level[order_id]
+            order = self.order_map[order_id]
 
-        # Remove from price level
-        removed = price_level.remove_order(order)
-        if not removed:
-            return False
+            # Remove from price level
+            removed = price_level.remove_order(order)
+            if not removed:
+                return False
 
-        # Remove from mappings
-        del self.order_map[order_id]
-        del self.order_to_price_level[order_id]
+            # Remove from mappings
+            del self.order_map[order_id]
+            del self.order_to_price_level[order_id]
 
-        # FIX: Clean up empty price levels immediately
-        if price_level.is_empty():
-            # Remove from price_levels dict
-            if price_level.price in self.price_levels:
-                del self.price_levels[price_level.price]
+            # Clean up empty price levels immediately
+            if price_level.is_empty():
+                # Remove from price_levels dict
+                if price_level.price in self.price_levels:
+                    del self.price_levels[price_level.price]
 
-            # Rebuild heap without this price
-            new_heap = []
-            for price in self.price_levels.keys():
-                if self.side == OrderSide.SELL:
-                    heapq.heappush(new_heap, price)
-                else:
-                    heapq.heappush(new_heap, -price)
-            self.heap = new_heap
-            heapq.heapify(self.heap)
+                # Rebuild heap without this price
+                new_heap = []
+                for price in self.price_levels.keys():
+                    if self.side == OrderSide.SELL:
+                        heapq.heappush(new_heap, price)
+                    else:
+                        heapq.heappush(new_heap, -price)
+                self.heap = new_heap
+                heapq.heapify(self.heap)
 
-        return True
+            return True
 
     def _remove_price_level(self, price: float):
         """Remove empty price level from all data structures"""
@@ -193,47 +227,50 @@ class OrderBookSide:
 
     def get_best_price(self) -> Optional[float]:
         """Get best price with lazy cleanup of empty levels"""
-        while self.heap:
-            best_price = self._heap_peek()
-            if best_price is None:
-                return None
+        with self.lock:
+            while self.heap:
+                best_price = self._heap_peek()
+                if best_price is None:
+                    return None
 
-            # Check if price level still exists and has orders
-            if (
-                best_price in self.price_levels
-                and not self.price_levels[best_price].is_empty()
-            ):
-                return best_price
-            else:
-                # Remove empty price level
-                self._heap_pop()
-                if best_price in self.price_levels:
-                    del self.price_levels[best_price]
+                # Check if price level still exists and has orders
+                if (
+                    best_price in self.price_levels
+                    and not self.price_levels[best_price].is_empty()
+                ):
+                    return best_price
+                else:
+                    # Remove empty price level
+                    self._heap_pop()
+                    if best_price in self.price_levels:
+                        del self.price_levels[best_price]
 
-        return None
+            return None
 
     def get_price_level(self, price: float) -> Optional[PriceLevel]:
-        return self.price_levels.get(price)
+        with self.lock:
+            return self.price_levels.get(price)
 
     def get_depth(self, levels: int = 5) -> List[Tuple[float, int]]:
         """Get top N price levels with total volume"""
-        depth = []
-        temp_heap = self.heap.copy()
+        with self.lock:
+            depth = []
+            temp_heap = self.heap.copy()
 
-        for _ in range(min(levels, len(temp_heap))):
-            if not temp_heap:
-                break
+            for _ in range(min(levels, len(temp_heap))):
+                if not temp_heap:
+                    break
 
-            price = self._heap_peek_from_custom(temp_heap)
-            if price is None:
-                break
+                price = self._heap_peek_from_custom(temp_heap)
+                if price is None:
+                    break
 
-            heapq.heappop(temp_heap)  # Remove from temp heap
-            price_level = self.price_levels.get(price)
-            if price_level and not price_level.is_empty():
-                depth.append((price, price_level.total_volume))
+                heapq.heappop(temp_heap)  # Remove from temp heap
+                price_level = self.price_levels.get(price)
+                if price_level and not price_level.is_empty():
+                    depth.append((price, price_level.total_volume))
 
-        return depth
+            return depth
 
     def _heap_peek_from_custom(self, custom_heap: list) -> Optional[float]:
         """Peek from a custom heap"""

@@ -39,9 +39,35 @@ class RegimePolicy:
 class PolicyManager:
     """Manages and applies regime-specific policies"""
 
-    def __init__(self):
+    def __init__(self, custom_policies: Dict[MarketRegime, Dict] = None):
         self.policies = self._initialize_policies()
+
+        # Apply custom policy overrides if provided
+        if custom_policies:
+            self._apply_custom_policies(custom_policies)
+
         self.current_policy = self.policies[MarketRegime.NORMAL]
+
+    def _apply_custom_policies(self, custom_policies: Dict[MarketRegime, Dict]):
+        """Apply custom policy parameters to existing policies"""
+        for regime, custom_params in custom_policies.items():
+            if regime in self.policies:
+                # Update parameters while preserving policy structure
+                self.policies[regime].parameters.update(
+                    custom_params.get("parameters", {})
+                )
+
+                # Update other policy attributes if provided
+                if "priority_rule" in custom_params:
+                    self.policies[regime].priority_rule = custom_params["priority_rule"]
+                if "matching_algorithm" in custom_params:
+                    self.policies[regime].matching_algorithm = custom_params[
+                        "matching_algorithm"
+                    ]
+                if "liquidity_incentive" in custom_params:
+                    self.policies[regime].liquidity_incentive = custom_params[
+                        "liquidity_incentive"
+                    ]
 
     def _initialize_policies(self) -> Dict[MarketRegime, RegimePolicy]:
         """Initialize all regime policies"""
@@ -178,6 +204,20 @@ class PolicyManager:
 
         return True
 
+    def update_policy_parameters(
+        self, regime: MarketRegime, parameters: Dict[str, Any]
+    ):
+        """Update parameters for a specific regime policy"""
+        if regime in self.policies:
+            self.policies[regime].parameters.update(parameters)
+            # If this is the current policy, update it too
+            if self.current_policy.regime == regime:
+                self.current_policy = self.policies[regime]
+
+    def get_all_policies(self) -> Dict[MarketRegime, RegimePolicy]:
+        """Get all configured policies"""
+        return self.policies.copy()
+
 
 # Global policy manager instance
 policy_manager = PolicyManager()
@@ -186,3 +226,10 @@ policy_manager = PolicyManager()
 def get_policy_manager() -> PolicyManager:
     """Get the global policy manager instance"""
     return policy_manager
+
+
+def create_custom_policy_manager(
+    custom_policies: Dict[MarketRegime, Dict] = None,
+) -> PolicyManager:
+    """Create a new policy manager with custom policies"""
+    return PolicyManager(custom_policies=custom_policies)

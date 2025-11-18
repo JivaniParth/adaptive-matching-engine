@@ -7,7 +7,14 @@ from ..core.order_types import Order, OrderSide, OrderType
 class OrderGenerator:
     """Generates realistic market orders for testing"""
 
-    def __init__(self, symbol: str = "TEST", price_range: tuple = (100.0, 200.0)):
+    def __init__(self, symbol: str = "NIFTY", price_range: tuple = (18000.0, 19000.0)):
+        """
+        Initialize order generator for Indian markets.
+
+        Args:
+            symbol: Trading symbol (default: NIFTY for NSE)
+            price_range: Price range in INR (default: typical NIFTY range)
+        """
         self.symbol = symbol
         self.price_range = price_range
         self.last_price = (price_range[0] + price_range[1]) / 2

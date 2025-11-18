@@ -29,30 +29,30 @@ def run_basic_demo():
 
     engine = AdaptiveMatchingEngine()
 
-    # Create sample orders
-    print("Creating sample orders...")
+    # Create sample orders with realistic Indian market prices
+    print("Creating sample orders (NIFTY-like prices in INR)...")
     orders = [
-        Order.create_limit_order(OrderSide.BUY, 100.0, 100),
-        Order.create_limit_order(OrderSide.BUY, 99.5, 50),
-        Order.create_limit_order(OrderSide.SELL, 101.0, 75),
-        Order.create_limit_order(OrderSide.SELL, 100.5, 100),
+        Order.create_limit_order(OrderSide.BUY, 18000.0, 100),
+        Order.create_limit_order(OrderSide.BUY, 17995.0, 50),
+        Order.create_limit_order(OrderSide.SELL, 18010.0, 75),
+        Order.create_limit_order(OrderSide.SELL, 18005.0, 100),
     ]
 
     print("\nProcessing orders:")
     for i, order in enumerate(orders, 1):
-        print(f"\n{i}. {order.side.value} {order.quantity} @ ${order.price}")
+        print(f"\n{i}. {order.side.value} {order.quantity} @ ₹{order.price}")
         trades = engine.process_order(order)
 
         if trades:
             print(f"   ✓ Generated {len(trades)} trade(s):")
             for trade in trades:
-                print(f"     - {trade.quantity} units @ ${trade.price}")
+                print(f"     - {trade.quantity} units @ ₹{trade.price}")
         else:
             print(f"   → Added to order book")
 
         snapshot = engine.get_order_book_snapshot()
         print(
-            f"   Spread: ${snapshot.spread:.2f}, Regime: {engine.current_regime.value}"
+            f"   Spread: ₹{snapshot.spread:.2f}, Regime: {engine.current_regime.value}"
         )
 
     print("\n" + "=" * 70)

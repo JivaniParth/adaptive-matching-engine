@@ -16,6 +16,8 @@ This serves as a realistic baseline for comparison with the adaptive matching en
 from typing import List, Optional, Dict, Tuple
 import time
 from collections import defaultdict
+import threading
+import queue
 from .order_book import OrderBookSide, PriceLevel
 from .order_types import Order, OrderSide, Trade, OrderType, OrderValidity, TradingPhase
 
@@ -41,6 +43,7 @@ class NSEMatchingEngine:
         tick_size: float = 0.05,
         circuit_breaker_pct: float = 10.0,
         price_band_pct: float = 20.0,
+        async_cancel: bool = False,
     ):
         """
         Initialize NSE matching engine.
@@ -87,6 +90,19 @@ class NSEMatchingEngine:
         self.total_orders_processed = 0
         self.total_trades = 0
         self.circuit_breaker_hits = 0
+
+        # Async cancellation support
+        self.async_cancel = bool(async_cancel)
+        self._cancel_queue: Optional[queue.Queue] = None
+        self._cancel_worker_thread: Optional[threading.Thread] = None
+        self._cancel_worker_running = False
+        if self.async_cancel:
+            self._cancel_queue = queue.Queue()
+            self._cancel_worker_running = True
+            self._cancel_worker_thread = threading.Thread(
+                target=self._cancel_worker, daemon=True
+            )
+            self._cancel_worker_thread.start()
 
     def set_reference_price(self, price: float):
         """Set reference price (previous close) for circuit breaker calculations."""
@@ -610,6 +626,15 @@ class NSEMatchingEngine:
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel order by ID."""
+        # If async cancellation enabled, enqueue request
+        if self.async_cancel and self._cancel_queue is not None:
+            try:
+                self._cancel_queue.put_nowait(order_id)
+                return True
+            except queue.Full:
+                return False
+
+        # Synchronous cancellation (default)
         # Check regular order books
         if order_id in self.bids.order_map:
             return self.bids.remove_order(order_id)
@@ -622,6 +647,37 @@ class NSEMatchingEngine:
             return True
 
         return False
+
+    def _cancel_worker(self):
+        """Background worker that processes cancellation requests from a queue."""
+        q = self._cancel_queue
+        while self._cancel_worker_running:
+            try:
+                order_id = q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+
+            # Attempt to cancel in both books and pending stops
+            try:
+                cancelled = False
+                if order_id in self.bids.order_map:
+                    cancelled = self.bids.remove_order(order_id)
+                elif order_id in self.asks.order_map:
+                    cancelled = self.asks.remove_order(order_id)
+                elif order_id in self.pending_stop_orders:
+                    del self.pending_stop_orders[order_id]
+                    cancelled = True
+
+                # Optionally: log or track cancellation outcome
+            finally:
+                q.task_done()
+
+    def shutdown(self, wait: bool = True):
+        """Shutdown background workers cleanly."""
+        if self.async_cancel and self._cancel_queue is not None:
+            self._cancel_worker_running = False
+            if wait and self._cancel_worker_thread is not None:
+                self._cancel_worker_thread.join(timeout=1.0)
 
     def get_order_book_snapshot(self, levels: int = 10):
         """Get current order book snapshot."""

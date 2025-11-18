@@ -184,11 +184,17 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
     def __init__(self, config: Optional[Dict] = None, benchmark_mode: bool = False):
         super().__init__()
 
+        # Merge user config with defaults
+        self.config = self._get_default_config()
+        if config:
+            self.config.update(config)
+
         # Replace with adaptive order books
         self.bids = AdaptiveOrderBookSide(OrderSide.BUY)
         self.asks = AdaptiveOrderBookSide(OrderSide.SELL)
-        # Use optimized regime detector
-        self.regime_detector = OptimizedRegimeDetector(config)
+
+        # Use optimized regime detector with configuration
+        self.regime_detector = OptimizedRegimeDetector(self.config)
         self.current_regime = MarketRegime.NORMAL
         self.regime_change_count = 0
         self.last_regime_change = time.time()
@@ -203,6 +209,19 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
         # Benchmark mode disables regime detection and metrics recording to
         # measure raw throughput with the adaptive order book structure.
         self.benchmark_mode = bool(benchmark_mode)
+
+    def _get_default_config(self) -> Dict:
+        """Get default configuration for adaptive engine"""
+        return {
+            "detection_interval": 100,
+            "window_size": 100,
+            "volatility_threshold": 0.05,
+            "spread_threshold": 0.02,
+            "imbalance_threshold": 0.5,
+            "cancellation_threshold": 0.25,
+            "enable_regime_detection": True,
+            "enable_metrics_recording": True,
+        }
 
     def process_order(self, order: Order) -> List[Trade]:
         """Process order with adaptive logic"""
@@ -270,6 +289,55 @@ class AdaptiveMatchingEngine(BaseMatchingEngine):
                 "to_regime": new_regime.value,
             }
         )
+
+    def update_config(self, new_config: Dict):
+        """Update engine configuration dynamically"""
+        self.config.update(new_config)
+        # Update regime detector with new config
+        self.regime_detector = OptimizedRegimeDetector(self.config)
+
+    def get_config(self) -> Dict:
+        """Get current configuration"""
+        return self.config.copy()
+
+    def set_regime_threshold(self, threshold_type: str, value: float):
+        """Set a specific regime detection threshold
+
+        Args:
+            threshold_type: One of 'volatility', 'spread', 'imbalance', 'cancellation'
+            value: New threshold value
+        """
+        threshold_key = f"{threshold_type}_threshold"
+        if threshold_key in self.config:
+            self.config[threshold_key] = value
+            # Update regime detector
+            setattr(self.regime_detector, threshold_key, value)
+        else:
+            raise ValueError(f"Unknown threshold type: {threshold_type}")
+
+    def get_regime_statistics(self) -> Dict:
+        """Get comprehensive regime statistics"""
+        regime_counts = {}
+        for entry in self.regime_history:
+            regime = entry["to_regime"]
+            regime_counts[regime] = regime_counts.get(regime, 0) + 1
+
+        return {
+            "total_changes": self.regime_change_count,
+            "current_regime": self.current_regime.value,
+            "regime_distribution": regime_counts,
+            "regime_history": self.regime_history,
+            "time_since_last_change": (
+                time.time() - self.last_regime_change if self.last_regime_change else 0
+            ),
+        }
+
+    def reset_statistics(self):
+        """Reset all statistics and history"""
+        self.metrics_history.clear()
+        self.regime_history.clear()
+        self.regime_change_count = 0
+        self.order_count = 0
 
     def _update_market_metrics(self, order: Order):
         """Update internal market metrics for regime detection"""

@@ -1,0 +1,24 @@
+__pycache__/
+
+matching_engine_venv/
+
+.pytest_cache/
+
+temp/
+
+*.pyc
+
+results/*.json
+
+benchmark_results.json
+
+__init__.py
+
+# Ignore results folder with JSON files
+results/
+
+#ignoring data folder which is outside src folder and contains .csv data files
+data/
+
+# Not to ignore data folder inside src/
+!/src/data/

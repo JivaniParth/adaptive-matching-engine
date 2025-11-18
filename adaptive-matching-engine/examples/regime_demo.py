@@ -94,11 +94,11 @@ class RegimeDemonstration:
             self.generator.generate_orders(1, market_order_ratio=0.0)[0],
         ]
 
-        # Set wide spreads manually
+        # Set wide spreads manually (in INR)
         illiquid_orders[0].side = OrderSide.BUY
-        illiquid_orders[0].price = 95.0
+        illiquid_orders[0].price = 17900.0
         illiquid_orders[1].side = OrderSide.SELL
-        illiquid_orders[1].price = 105.0
+        illiquid_orders[1].price = 18100.0
 
         for order in illiquid_orders:
             self.engine.process_order(order)
