@@ -554,78 +554,6 @@ def main():
                 config_df = pd.DataFrame(config_data)
                 st.dataframe(config_df, use_container_width=True, hide_index=True)
 
-        # Key Metrics with Cards
-        st.subheader("📈 Key Performance Metrics")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.markdown("### Base Engine")
-            st.metric(
-                "Throughput",
-                f"{results['base']['throughput']:,.0f} ops/s",
-                help="Orders processed per second",
-            )
-            st.metric(
-                "Avg Latency",
-                f"{results['base']['avg_latency']:.4f} ms",
-                help="Average time to process each order",
-            )
-            st.metric(
-                "Total Trades",
-                f"{results['base']['trades']:,}",
-                help="Number of successful trades executed",
-            )
-
-        with col2:
-            st.markdown("### NSE Traditional")
-            st.metric(
-                "Throughput",
-                f"{results['nse']['throughput']:,.0f} ops/s",
-                help="Orders processed per second",
-            )
-            st.metric(
-                "Avg Latency",
-                f"{results['nse']['avg_latency']:.4f} ms",
-                help="Average time to process each order",
-            )
-            st.metric(
-                "Total Trades",
-                f"{results['nse']['trades']:,}",
-                help="Number of successful trades executed",
-            )
-            st.metric(
-                "Circuit Breakers",
-                f"{results['nse']['circuit_breakers']}",
-                help="Number of times circuit breaker was triggered",
-            )
-
-        with col3:
-            st.markdown("### Adaptive Engine")
-            st.metric(
-                "Throughput",
-                f"{results['adaptive']['throughput']:,.0f} ops/s",
-                help="Orders processed per second",
-            )
-            st.metric(
-                "Avg Latency",
-                f"{results['adaptive']['avg_latency']:.4f} ms",
-                help="Average time to process each order",
-            )
-            st.metric(
-                "Total Trades",
-                f"{results['adaptive']['trades']:,}",
-                help="Number of successful trades executed",
-            )
-            st.metric(
-                "Regime Changes",
-                f"{results['adaptive']['regime_changes']}",
-                help="Number of times market regime changed",
-            )
-            st.info(f"**Final Regime:** {results['adaptive']['final_regime']}")
-
-        st.markdown("---")
-
         # Performance Comparison Charts
         st.subheader("📊 Performance Comparison")
 
@@ -649,47 +577,25 @@ def main():
 
             regime_stats = results["adaptive"]["regime_stats"]
 
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.markdown("#### Regime Distribution")
-                if regime_stats["regime_distribution"]:
-                    regime_df = pd.DataFrame(
-                        [
-                            {"Regime": regime, "Occurrences": count}
-                            for regime, count in regime_stats[
-                                "regime_distribution"
-                            ].items()
-                        ]
-                    )
-
-                    fig = px.pie(
-                        regime_df,
-                        values="Occurrences",
-                        names="Regime",
-                        title="Time Spent in Each Regime",
-                        color_discrete_sequence=px.colors.qualitative.Set3,
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("No regime changes occurred during the test")
-
-            with col2:
-                st.markdown("#### Regime Transitions")
-                st.metric("Total Regime Changes", regime_stats["total_changes"])
-                st.metric("Current Regime", regime_stats["current_regime"])
-                st.metric(
-                    "Time Since Last Change",
-                    f"{regime_stats['time_since_last_change']:.2f}s",
+            st.markdown("#### Regime Distribution")
+            if regime_stats["regime_distribution"]:
+                regime_df = pd.DataFrame(
+                    [
+                        {"Regime": regime, "Occurrences": count}
+                        for regime, count in regime_stats["regime_distribution"].items()
+                    ]
                 )
 
-                if regime_stats["regime_history"]:
-                    st.markdown("**Recent Transitions:**")
-                    # Show last 5 transitions
-                    for transition in regime_stats["regime_history"][-5:]:
-                        st.caption(
-                            f"• {transition['from_regime']} → {transition['to_regime']}"
-                        )
+                fig = px.pie(
+                    regime_df,
+                    values="Occurrences",
+                    names="Regime",
+                    title="Time Spent in Each Regime",
+                    color_discrete_sequence=px.colors.qualitative.Set3,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No regime changes occurred during the test")
 
         # Radar Chart
         st.subheader("🎯 Overall Performance Radar")
